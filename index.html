@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monitor de Temperatura</title>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+    }
+
+    header h1 { font-size: 1.4rem; font-weight: 600; }
+
+    #status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+    }
+
+    #status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #64748b;
+      transition: background 0.3s;
+    }
+
+    #status-dot.connected    { background: #22c55e; }
+    #status-dot.disconnected { background: #ef4444; }
+
+    .cards {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 28px;
+    }
+
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 20px 28px;
+      min-width: 160px;
+      flex: 1;
+    }
+
+    .card-label {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+
+    .card-value {
+      font-size: 2.2rem;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+
+    .card-value.error { font-size: 1rem; color: #f87171; }
+
+    .card-unit {
+      font-size: 1rem;
+      color: #94a3b8;
+      margin-left: 4px;
+    }
+
+    .chart-container {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .chart-container h2 {
+      font-size: 0.9rem;
+      color: #94a3b8;
+      margin-bottom: 16px;
+    }
+
+    #last-update {
+      text-align: right;
+      font-size: 0.75rem;
+      color: #475569;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Monitor de Temperatura</h1>
+  <div id="status">
+    <div id="status-dot"></div>
+    <span id="status-text">Conectando...</span>
+  </div>
+</header>
+
+<div class="cards" id="cards">
+  <!-- Las tarjetas se generan dinámicamente -->
+</div>
+
+<div class="chart-container">
+  <h2>Historial (últimas 60 lecturas)</h2>
+  <canvas id="chart"></canvas>
+</div>
+
+<p id="last-update">Sin datos aún</p>
+
+<script>
+  // ── CONFIGURACIÓN — cambia PROYECTO_ID igual que en el .ino ──
+  const BROKER_URL = 'wss://broker.hivemq.com:8884/mqtt';
+  const TOPIC      = 'temp_monitor/tony_lab_unf/data';
+  const MAX_POINTS = 60;
+
+  // Colores para cada sensor (agrega más si tienes más de 4)
+  const COLORES = ['#38bdf8', '#fb923c', '#4ade80', '#f472b6'];
+
+  // ── Estado ───────────────────────────────────────────────────
+  let labels   = [];
+  let datasets = [];
+  let cards    = [];
+  let chart;
+
+  // ── Inicializar gráfica vacía ────────────────────────────────
+  function initChart() {
+    const ctx = document.getElementById('chart').getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        animation: false,
+        responsive: true,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: {
+            ticks: { color: '#64748b', maxTicksLimit: 10 },
+            grid:  { color: '#1e293b' }
+          },
+          y: {
+            ticks: { color: '#64748b', callback: v => v + ' °C' },
+            grid:  { color: '#334155' }
+          }
+        },
+        plugins: {
+          legend: { labels: { color: '#94a3b8' } },
+          tooltip: {
+            callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y} °C` }
+          }
+        }
+      }
+    });
+  }
+
+  // ── Asegurar que existen datasets y tarjetas para N sensores ─
+  function asegurarSensores(n) {
+    const cardsEl = document.getElementById('cards');
+
+    for (let i = datasets.length; i < n; i++) {
+      datasets.push({
+        label: `Sensor ${i}`,
+        data: [],
+        borderColor: COLORES[i % COLORES.length],
+        backgroundColor: COLORES[i % COLORES.length] + '22',
+        tension: 0.3,
+        pointRadius: 2,
+        fill: true,
+      });
+
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `
+        <div class="card-label">Sensor ${i}</div>
+        <div class="card-value" id="val-${i}">--<span class="card-unit">°C</span></div>
+      `;
+      cardsEl.appendChild(card);
+      cards.push(card);
+    }
+
+    if (chart) chart.update('none');
+  }
+
+  // ── Procesar mensaje MQTT ────────────────────────────────────
+  function procesarMensaje(payload) {
+    let data;
+    try { data = JSON.parse(payload); } catch { return; }
+
+    const ahora = new Date().toLocaleTimeString();
+    asegurarSensores(data.s.length);
+
+    labels.push(ahora);
+    if (labels.length > MAX_POINTS) labels.shift();
+
+    data.s.forEach(sensor => {
+      const i = sensor.id;
+      const valEl = document.getElementById(`val-${i}`);
+
+      if (sensor.err) {
+        datasets[i].data.push(null);
+        valEl.innerHTML = `<span class="error">Sin termocupla</span>`;
+      } else {
+        const t = parseFloat(sensor.t);
+        datasets[i].data.push(t);
+        valEl.innerHTML = `${t.toFixed(2)}<span class="card-unit">°C</span>`;
+      }
+
+      if (datasets[i].data.length > MAX_POINTS) datasets[i].data.shift();
+    });
+
+    chart.update();
+    document.getElementById('last-update').textContent =
+      `Última actualización: ${ahora}`;
+  }
+
+  // ── Conexión MQTT ────────────────────────────────────────────
+  function conectar() {
+    const dot  = document.getElementById('status-dot');
+    const text = document.getElementById('status-text');
+
+    const client = mqtt.connect(BROKER_URL, {
+      clientId: 'dashboard_' + Math.random().toString(16).slice(2, 8),
+      clean: true,
+    });
+
+    client.on('connect', () => {
+      dot.className = 'connected';
+      text.textContent = 'Conectado';
+      client.subscribe(TOPIC);
+    });
+
+    client.on('message', (topic, message) => {
+      procesarMensaje(message.toString());
+    });
+
+    client.on('disconnect', () => {
+      dot.className = 'disconnected';
+      text.textContent = 'Desconectado';
+    });
+
+    client.on('error', err => {
+      dot.className = 'disconnected';
+      text.textContent = 'Error: ' + err.message;
+    });
+  }
+
+  // ── Arranque ─────────────────────────────────────────────────
+  initChart();
+  conectar();
+</script>
+
+</body>
+</html>
