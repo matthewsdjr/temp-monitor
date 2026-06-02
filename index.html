@@ -4,266 +4,531 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Monitor de Temperatura</title>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mqtt/dist/mqtt.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    :root {
+      --bg:     #070d1a;
+      --card:   #111827;
+      --border: #1e2d4a;
+      --text:   #e2e8f0;
+      --muted:  #64748b;
+    }
+
     body {
-      font-family: system-ui, sans-serif;
-      background: #0f172a;
-      color: #e2e8f0;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
       min-height: 100vh;
-      padding: 24px;
+      padding: 20px 24px;
     }
 
-    header {
+    /* ── Header ── */
+    .header {
       display: flex;
-      align-items: center;
       justify-content: space-between;
-      margin-bottom: 28px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 20px;
     }
 
-    header h1 { font-size: 1.4rem; font-weight: 600; }
+    .header h1 {
+      font-size: 1.5rem;
+      font-weight: 800;
+      background: linear-gradient(120deg, #38bdf8 0%, #818cf8 60%, #ec4899 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
 
-    #status {
+    .header p { font-size: .78rem; color: var(--muted); margin-top: 4px; }
+
+    /* ── Status badge ── */
+    .status {
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 0.85rem;
+      font-size: .82rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 16px;
+      white-space: nowrap;
     }
 
-    #status-dot {
-      width: 10px;
-      height: 10px;
+    .dot {
+      width: 8px; height: 8px;
       border-radius: 50%;
-      background: #64748b;
-      transition: background 0.3s;
+      background: var(--muted);
+      position: relative;
+      flex-shrink: 0;
     }
 
-    #status-dot.connected    { background: #22c55e; }
-    #status-dot.disconnected { background: #ef4444; }
+    .dot.on  { background: #22c55e; }
+    .dot.off { background: #ef4444; }
 
-    .cards {
+    .dot.on::after {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: 50%;
+      background: #22c55e44;
+      animation: ping 2s ease-in-out infinite;
+    }
+
+    @keyframes ping {
+      0%, 100% { transform: scale(1); opacity: .8; }
+      60%       { transform: scale(2.2); opacity: 0; }
+    }
+
+    /* ── Session bar ── */
+    .session-bar {
       display: flex;
-      gap: 16px;
+      gap: 24px;
       flex-wrap: wrap;
-      margin-bottom: 28px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 18px;
+      font-size: .78rem;
+      color: var(--muted);
+      margin-bottom: 20px;
+    }
+
+    .session-bar strong { color: var(--text); }
+
+    /* ── Sensor cards ── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      gap: 14px;
+      margin-bottom: 20px;
     }
 
     .card {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 20px 28px;
-      min-width: 160px;
-      flex: 1;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 20px;
+      position: relative;
+      overflow: hidden;
     }
 
-    .card-label {
-      font-size: 0.75rem;
-      color: #94a3b8;
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: var(--c, #3b82f6);
+      border-radius: 14px 14px 0 0;
+      transition: background .4s;
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .card-name {
+      font-size: .68rem;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-bottom: 8px;
-    }
-
-    .card-value {
-      font-size: 2.2rem;
+      letter-spacing: .08em;
       font-weight: 700;
-      color: #f8fafc;
+      color: var(--muted);
     }
 
-    .card-value.error { font-size: 1rem; color: #f87171; }
+    .trend {
+      font-size: .72rem;
+      padding: 2px 9px;
+      border-radius: 999px;
+      background: #ffffff0a;
+      color: var(--muted);
+    }
+    .trend.up   { color: #fca5a5; background: #ef444418; }
+    .trend.down { color: #7dd3fc; background: #38bdf818; }
+    .trend.flat { color: #86efac; background: #22c55e18; }
 
-    .card-unit {
-      font-size: 1rem;
-      color: #94a3b8;
-      margin-left: 4px;
+    .temp-value {
+      font-size: 2.8rem;
+      font-weight: 800;
+      letter-spacing: -2px;
+      color: var(--c, #3b82f6);
+      line-height: 1;
+      margin-bottom: 14px;
+      transition: color .4s;
     }
 
-    .chart-container {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 12px;
+    .temp-value .unit {
+      font-size: 1.1rem;
+      font-weight: 400;
+      color: var(--muted);
+      letter-spacing: 0;
+      margin-left: 2px;
+    }
+
+    .temp-value.err {
+      font-size: .88rem;
+      color: #4b5563;
+      font-weight: 500;
+      letter-spacing: 0;
+    }
+
+    .stats-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+    }
+
+    .stat { text-align: center; }
+    .stat-lbl { font-size: .62rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+    .stat-val { font-size: .82rem; font-weight: 600; margin-top: 2px; }
+
+    /* ── Chart section ── */
+    .chart-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
       padding: 20px;
     }
 
-    .chart-container h2 {
-      font-size: 0.9rem;
-      color: #94a3b8;
+    .chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 10px;
       margin-bottom: 16px;
     }
 
-    #last-update {
-      text-align: right;
-      font-size: 0.75rem;
-      color: #475569;
-      margin-top: 12px;
+    .chart-header h2 { font-size: .95rem; font-weight: 600; }
+    .chart-header p  { font-size: .72rem; color: var(--muted); margin-top: 3px; }
+
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .btn {
+      font-size: .76rem;
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: inherit;
+      transition: all .15s;
+    }
+
+    .btn:hover { background: #ffffff0d; color: var(--text); border-color: #334155; }
+
+    .btn-accent {
+      background: #172554;
+      border-color: #1d4ed8;
+      color: #93c5fd;
+    }
+    .btn-accent:hover { background: #1d4ed8; color: #fff; }
+
+    .chart-hint {
+      text-align: center;
+      font-size: .7rem;
+      color: #1e3a5f;
+      margin-top: 10px;
+      user-select: none;
+    }
+
+    canvas { max-height: 420px; }
+
+    @media (max-width: 520px) {
+      body { padding: 12px; }
+      .temp-value { font-size: 2.2rem; }
     }
   </style>
 </head>
 <body>
 
-<header>
-  <h1>Monitor de Temperatura</h1>
-  <div id="status">
-    <div id="status-dot"></div>
+<div class="header">
+  <div>
+    <h1>Monitor de Temperatura</h1>
+    <p>ESP32-C3 &nbsp;·&nbsp; MAX6675 &nbsp;·&nbsp; MQTT en tiempo real</p>
+  </div>
+  <div class="status">
+    <div class="dot" id="dot"></div>
     <span id="status-text">Conectando...</span>
   </div>
-</header>
-
-<div class="cards" id="cards">
-  <!-- Las tarjetas se generan dinámicamente -->
 </div>
 
-<div class="chart-container">
-  <h2>Historial (últimas 60 lecturas)</h2>
+<div class="session-bar">
+  <span>Lecturas: <strong id="n-readings">0</strong></span>
+  <span>Sesión iniciada: <strong id="t-start">—</strong></span>
+  <span>Última lectura: <strong id="t-last">—</strong></span>
+</div>
+
+<div class="cards" id="cards"></div>
+
+<div class="chart-box">
+  <div class="chart-header">
+    <div>
+      <h2>Historial completo de la sesión</h2>
+      <p>Todas las lecturas desde que el ESP32 se conectó</p>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="chart.resetZoom()">↺ Reset zoom</button>
+      <button class="btn" onclick="chart.resetZoom()">⤢ Ver todo</button>
+      <button class="btn btn-accent" onclick="exportCSV()">↓ Exportar CSV</button>
+    </div>
+  </div>
   <canvas id="chart"></canvas>
+  <p class="chart-hint">
+    🖱 Rueda del ratón · zoom &nbsp;|&nbsp; Arrastrar · mover &nbsp;|&nbsp; Doble clic · reset
+  </p>
 </div>
-
-<p id="last-update">Sin datos aún</p>
 
 <script>
-  // ── CONFIGURACIÓN — cambia PROYECTO_ID igual que en el .ino ──
+  // ─── CONFIGURACIÓN ────────────────────────────────────────────
   const BROKER_URL = 'wss://broker.hivemq.com:8884/mqtt';
   const TOPIC      = 'temp_monitor/tony_lab_unf/data';
-  const MAX_POINTS = 60;
+  const COLORS     = ['#3b82f6', '#f59e0b', '#10b981', '#ec4899'];
 
-  // Colores para cada sensor (agrega más si tienes más de 4)
-  const COLORES = ['#38bdf8', '#fb923c', '#4ade80', '#f472b6'];
-
-  // ── Estado ───────────────────────────────────────────────────
-  let labels   = [];
-  let datasets = [];
-  let cards    = [];
+  // ─── ESTADO ──────────────────────────────────────────────────
+  const sensors     = [];
+  let totalReadings = 0;
+  let sessionStart  = null;
   let chart;
 
-  // ── Inicializar gráfica vacía ────────────────────────────────
+  // ─── HELPERS ─────────────────────────────────────────────────
+  function tempColor(t) {
+    if (t <  30) return '#22d3ee';
+    if (t <  60) return '#4ade80';
+    if (t < 100) return '#fb923c';
+    return '#ef4444';
+  }
+
+  function calcTrend(hist) {
+    if (hist.length < 5) return { sym: '—', lbl: '', cls: '' };
+    const d = hist.at(-1).v - hist.at(-5).v;
+    if (d >  0.5) return { sym: '↑', lbl: 'subiendo', cls: 'up' };
+    if (d < -0.5) return { sym: '↓', lbl: 'bajando',  cls: 'down' };
+    return { sym: '→', lbl: 'estable', cls: 'flat' };
+  }
+
+  const fS = v => v != null ? v.toFixed(1) + '°' : '—';
+
+  // ─── CHART ───────────────────────────────────────────────────
   function initChart() {
-    const ctx = document.getElementById('chart').getContext('2d');
-    chart = new Chart(ctx, {
+    chart = new Chart(document.getElementById('chart').getContext('2d'), {
       type: 'line',
-      data: { labels, datasets },
+      data: { datasets: [] },
       options: {
         animation: false,
         responsive: true,
         interaction: { mode: 'index', intersect: false },
         scales: {
           x: {
-            ticks: { color: '#64748b', maxTicksLimit: 10 },
-            grid:  { color: '#1e293b' }
+            type: 'linear',
+            ticks: {
+              color: '#334155',
+              maxTicksLimit: 8,
+              callback: v => new Date(v).toLocaleTimeString(),
+            },
+            grid: { color: '#0a1628' },
           },
           y: {
-            ticks: { color: '#64748b', callback: v => v + ' °C' },
-            grid:  { color: '#334155' }
-          }
+            ticks: { color: '#334155', callback: v => v.toFixed(1) + ' °C' },
+            grid: { color: '#0a1628' },
+          },
         },
         plugins: {
-          legend: { labels: { color: '#94a3b8' } },
+          legend: {
+            labels: { color: '#64748b', usePointStyle: true, pointStyle: 'circle' },
+          },
           tooltip: {
-            callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y} °C` }
-          }
-        }
-      }
+            backgroundColor: '#0f1629',
+            borderColor: '#1e2d4a',
+            borderWidth: 1,
+            titleColor: '#64748b',
+            bodyColor: '#e2e8f0',
+            padding: 10,
+            callbacks: {
+              title: items => new Date(items[0].parsed.x).toLocaleTimeString(),
+              label: c => ` ${c.dataset.label}: ${c.parsed.y.toFixed(2)} °C`,
+            },
+          },
+          zoom: {
+            zoom:  { wheel: { enabled: true, speed: 0.08 }, pinch: { enabled: true }, mode: 'x' },
+            pan:   { enabled: true, mode: 'x' },
+          },
+        },
+      },
     });
   }
 
-  // ── Asegurar que existen datasets y tarjetas para N sensores ─
-  function asegurarSensores(n) {
-    const cardsEl = document.getElementById('cards');
+  // ─── SENSOR CARD ─────────────────────────────────────────────
+  function ensureSensor(i) {
+    if (sensors[i]) return;
+    const color = COLORS[i % COLORS.length];
+    sensors[i] = { color, history: [], min: Infinity, max: -Infinity, sum: 0, count: 0 };
 
-    for (let i = datasets.length; i < n; i++) {
-      datasets.push({
-        label: `Sensor ${i}`,
-        data: [],
-        borderColor: COLORES[i % COLORES.length],
-        backgroundColor: COLORES[i % COLORES.length] + '22',
-        tension: 0.3,
-        pointRadius: 2,
-        fill: true,
-      });
+    chart.data.datasets.push({
+      label: `Sensor ${i}`,
+      data: [],
+      borderColor: color,
+      backgroundColor: color + '14',
+      tension: 0.35,
+      pointRadius: 0,
+      pointHoverRadius: 5,
+      borderWidth: 2,
+      fill: false,
+    });
 
-      const card = document.createElement('div');
-      card.className = 'card';
-      card.innerHTML = `
-        <div class="card-label">Sensor ${i}</div>
-        <div class="card-value" id="val-${i}">--<span class="card-unit">°C</span></div>
-      `;
-      cardsEl.appendChild(card);
-      cards.push(card);
-    }
-
-    if (chart) chart.update('none');
+    const card = document.createElement('div');
+    card.id = `card-${i}`;
+    card.className = 'card';
+    card.style.setProperty('--c', color);
+    card.innerHTML = `
+      <div class="card-top">
+        <span class="card-name">Sensor ${i}</span>
+        <span class="trend" id="trend-${i}">—</span>
+      </div>
+      <div class="temp-value" id="val-${i}">—</div>
+      <div class="stats-row">
+        <div class="stat">
+          <div class="stat-lbl">Mín</div>
+          <div class="stat-val" id="min-${i}" style="color:#38bdf8">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-lbl">Prom</div>
+          <div class="stat-val" id="avg-${i}" style="color:#a3a3a3">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-lbl">Máx</div>
+          <div class="stat-val" id="max-${i}" style="color:#fb923c">—</div>
+        </div>
+      </div>`;
+    document.getElementById('cards').appendChild(card);
   }
 
-  // ── Procesar mensaje MQTT ────────────────────────────────────
-  function procesarMensaje(payload) {
+  function updateSensor(i, val, ts) {
+    const s  = sensors[i];
+    const el = document.getElementById(`val-${i}`);
+
+    if (val === null) {
+      el.className = 'temp-value err';
+      el.textContent = 'Sin termocupla';
+      return;
+    }
+
+    s.min   = Math.min(s.min, val);
+    s.max   = Math.max(s.max, val);
+    s.sum  += val;
+    s.count++;
+    s.history.push({ ts, v: val });
+
+    const tr = calcTrend(s.history);
+    const trEl = document.getElementById(`trend-${i}`);
+    trEl.textContent = tr.sym + (tr.lbl ? ' ' + tr.lbl : '');
+    trEl.className   = 'trend ' + tr.cls;
+
+    const tc = tempColor(val);
+    document.getElementById(`card-${i}`).style.setProperty('--c', tc);
+    el.className  = 'temp-value';
+    el.style.color = tc;
+    el.innerHTML  = `${val.toFixed(2)}<span class="unit">°C</span>`;
+
+    document.getElementById(`min-${i}`).textContent = fS(s.min);
+    document.getElementById(`avg-${i}`).textContent = fS(s.sum / s.count);
+    document.getElementById(`max-${i}`).textContent = fS(s.max);
+
+    chart.data.datasets[i].data.push({ x: ts, y: val });
+  }
+
+  // ─── MQTT ────────────────────────────────────────────────────
+  function onMessage(payload) {
     let data;
     try { data = JSON.parse(payload); } catch { return; }
 
-    const ahora = new Date().toLocaleTimeString();
-    asegurarSensores(data.s.length);
+    const ts = Date.now();
 
-    labels.push(ahora);
-    if (labels.length > MAX_POINTS) labels.shift();
+    if (!sessionStart) {
+      sessionStart = ts;
+      document.getElementById('t-start').textContent =
+        new Date(ts).toLocaleTimeString();
+    }
 
-    data.s.forEach(sensor => {
-      const i = sensor.id;
-      const valEl = document.getElementById(`val-${i}`);
+    document.getElementById('n-readings').textContent = ++totalReadings;
+    document.getElementById('t-last').textContent =
+      new Date(ts).toLocaleTimeString();
 
-      if (sensor.err) {
-        datasets[i].data.push(null);
-        valEl.innerHTML = `<span class="error">Sin termocupla</span>`;
-      } else {
-        const t = parseFloat(sensor.t);
-        datasets[i].data.push(t);
-        valEl.innerHTML = `${t.toFixed(2)}<span class="card-unit">°C</span>`;
-      }
-
-      if (datasets[i].data.length > MAX_POINTS) datasets[i].data.shift();
+    data.s.forEach(s => {
+      ensureSensor(s.id);
+      updateSensor(s.id, s.err ? null : parseFloat(s.t), ts);
     });
 
-    chart.update();
-    document.getElementById('last-update').textContent =
-      `Última actualización: ${ahora}`;
+    chart.update('none');
   }
 
-  // ── Conexión MQTT ────────────────────────────────────────────
   function conectar() {
-    const dot  = document.getElementById('status-dot');
+    const dot  = document.getElementById('dot');
     const text = document.getElementById('status-text');
 
     const client = mqtt.connect(BROKER_URL, {
-      clientId: 'dashboard_' + Math.random().toString(16).slice(2, 8),
+      clientId: 'dash_' + Math.random().toString(16).slice(2, 10),
       clean: true,
     });
 
     client.on('connect', () => {
-      dot.className = 'connected';
+      dot.className = 'dot on';
       text.textContent = 'Conectado';
       client.subscribe(TOPIC);
     });
-
-    client.on('message', (topic, message) => {
-      procesarMensaje(message.toString());
-    });
-
-    client.on('disconnect', () => {
-      dot.className = 'disconnected';
-      text.textContent = 'Desconectado';
-    });
-
-    client.on('error', err => {
-      dot.className = 'disconnected';
-      text.textContent = 'Error: ' + err.message;
-    });
+    client.on('message', (_, msg) => onMessage(msg.toString()));
+    client.on('disconnect', () => { dot.className = 'dot off'; text.textContent = 'Desconectado'; });
+    client.on('error',      () => { dot.className = 'dot off'; text.textContent = 'Error de conexión'; });
   }
 
-  // ── Arranque ─────────────────────────────────────────────────
+  // ─── EXPORTAR CSV ─────────────────────────────────────────────
+  function exportCSV() {
+    if (!sensors.filter(Boolean).length) { alert('Sin datos para exportar.'); return; }
+
+    const tsSet = new Set();
+    sensors.forEach(s => s?.history.forEach(p => tsSet.add(p.ts)));
+    const sorted = [...tsSet].sort((a, b) => a - b);
+
+    const maps = sensors.map(s => {
+      const m = new Map();
+      s?.history.forEach(p => m.set(p.ts, p.v));
+      return m;
+    });
+
+    const cols   = sensors.map((s, i) => s ? `sensor${i}_C` : null).filter(Boolean);
+    const header = ['timestamp_ms', 'fecha_hora', ...cols];
+
+    const rows = sorted.map(ts => {
+      const vals = sensors
+        .map((s, i) => s ? (maps[i].get(ts)?.toFixed(2) ?? '') : null)
+        .filter(v => v !== null);
+      return [ts, new Date(ts).toLocaleString(), ...vals].join(',');
+    });
+
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(
+        new Blob([[header.join(','), ...rows].join('\n')], { type: 'text/csv' })
+      ),
+      download: `temp_${new Date().toISOString().slice(0,19).replace(/[T:]/g,'-')}.csv`,
+    });
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  // ─── ARRANQUE ────────────────────────────────────────────────
   initChart();
   conectar();
 </script>
-
 </body>
 </html>
