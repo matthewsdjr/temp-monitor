@@ -376,7 +376,7 @@
     sensors[i] = { color, history: [], min: Infinity, max: -Infinity, sum: 0, count: 0 };
 
     chart.data.datasets.push({
-      label: `Sensor ${i}`,
+      label: `Sensor ${i + 1}`,
       data: [],
       borderColor: color,
       backgroundColor: color + '14',
@@ -393,7 +393,7 @@
     card.style.setProperty('--c', color);
     card.innerHTML = `
       <div class="card-top">
-        <span class="card-name">Sensor ${i}</span>
+        <span class="card-name">Sensor ${i + 1}</span>
         <span class="trend" id="trend-${i}">—</span>
       </div>
       <div class="temp-value" id="val-${i}">—</div>
